@@ -1,33 +1,34 @@
 import json
+import aiosqlite
 import sqlite3
+import tempfile
 from pathlib import Path
+
 from fastmcp import FastMCP
 
 
 mcp = FastMCP("expense tracker")
 
 BASE_DIR = Path(__file__).parent
-DB_PATH = BASE_DIR / "expenses.db"
 CATEGORIES_PATH = BASE_DIR / "categories.json"
 
+DATA_DIR = Path(tempfile.gettempdir()) / "expense_tracker_data"
+DATA_DIR.mkdir(
+    parents = True,
+    exist_ok = True,
+)
+DB_PATH = DATA_DIR / "expenses.db"
 
-def init_db() -> None:
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS expenses (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date DATETIME NOT NULL,
-            amount REAL NOT NULL,
-            category TEXT NOT NULL,
-            sub_category TEXT DEFAULT '',
-            note TEXT DEFAULT ''
-        )
-        """
+CREATE_TABLE = """
+    CREATE TABLE IF NOT EXISTS expenses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date DATETIME NOT NULL,
+        amount REAL NOT NULL,
+        category TEXT NOT NULL,
+        sub_category TEXT DEFAULT '',
+        note TEXT DEFAULT ''
     )
-    conn.commit()
-    conn.close()
-
+"""
 
 
 def load_categories() -> dict:
@@ -43,7 +44,7 @@ def load_categories() -> dict:
 
 
 @mcp.tool()
-def add_expense(
+async def add_expense(
     date: str,
     amount: float,
     category: str,
@@ -64,23 +65,22 @@ def add_expense(
         note: A short description of the expense.
     """
 
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.execute(
-        "INSERT INTO expenses "
-        "(date, amount, category, sub_category, note) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (date, amount, category, sub_category, note),
-    )
-    conn.commit()
-
-    new_id = cursor.lastrowid
-    conn.close()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(CREATE_TABLE)
+        cursor = db.execute(
+            "INSERT INTO expenses "
+            "(date, amount, category, sub_category, note) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (date, amount, category, sub_category, note),
+        )
+        await db.commit()
+        new_id = cursor.lastrowid
 
     return f"Saved expense #{new_id}: {amount} for {category} on {date}."
 
 
 @mcp.tool()
-def list_expenses(start_date: str, end_date: str) -> list[dict]:
+async def list_expenses(start_date: str, end_date: str) -> list[dict]:
     """
     List every expense between two dates (both days included).
 
@@ -89,24 +89,21 @@ def list_expenses(start_date: str, end_date: str) -> list[dict]:
         end_date: Last day to include, written as YYYY-MM-DD.
     """
 
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-
-    rows = conn.execute(
-        "SELECT id, date, amount, category, sub_category, note "
-        "FROM expenses "
-        "WHERE date BETWEEN ? AND ? "
-        "ORDER BY date, id",
-        (start_date, end_date),
-    ).fetchall()
-
-    conn.close()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(CREATE_TABLE)
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT id, date, amount, category, sub_category, note "
+            "FROM expenses WHERE date BETWEEN ? AND ? ORDER BY date, id",
+            (start_date, end_date),
+        )
+        rows = await cursor.fetchall()
 
     return [dict(row) for row in rows]
 
 
 @mcp.tool()
-def summarize_expenses(
+async def summarize_expenses(
     start_date: str,
     end_date: str,
     category: str = "",
@@ -125,21 +122,20 @@ def summarize_expenses(
         "FROM expenses "
         "WHERE date BETWEEN ? AND ?"
     )
-
     params = [start_date, end_date]
 
     if category:
         query += " AND category = ?"
         params.append(category)
-
     query += " GROUP BY category ORDER BY total DESC"
 
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-
-    rows = conn.execute(query, params).fetchall()
-
-    conn.close()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(CREATE_TABLE)
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            query, params,
+        )
+        rows = await cursor.fetchall()
 
     return [dict(row) for row in rows]
 
@@ -157,7 +153,6 @@ def categories_resource() -> str:
 
 
 def main():
-    init_db()
     mcp.run(
         transport = "http",
         host = "0.0.0.0",
