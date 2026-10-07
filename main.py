@@ -67,7 +67,7 @@ async def add_expense(
 
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(CREATE_TABLE)
-        cursor = db.execute(
+        cursor = await db.execute(
             "INSERT INTO expenses "
             "(date, amount, category, sub_category, note) "
             "VALUES (?, ?, ?, ?, ?)",
