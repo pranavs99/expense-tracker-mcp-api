@@ -1,0 +1,8 @@
+{
+  "Food": ["Groceries", "Restaurant"],
+  "Transport": ["Cab, Flight"],
+  "Health": ["Medicine", "Gym"],
+  "Entertainment": ["Courses", "Books"],
+  "Bills": ["Rent", "Mobile"],
+  "Other": ["Miscellaneous"]
+}
